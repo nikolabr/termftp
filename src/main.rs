@@ -1,7 +1,8 @@
 pub mod terminal;
+pub mod ftp;
 
 use std::{io, thread, time::Duration};
-use crossterm::event::{poll, read, Event, KeyCode};
+/*use crossterm::event::{poll, read, Event, KeyCode};
 use tui::{
     backend::CrosstermBackend,
     Terminal,
@@ -12,10 +13,15 @@ use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+};*/
 
 fn main() -> Result<(), io::Error> {
-    enable_raw_mode()?;
+    let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
+    println!("{}", ftp.read_server_response()?);
+    ftp.write_to_control_stream(String::from("USER dlpuser\n"))?;
+    println!("{}", ftp.read_server_response()?);
+
+    /*enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
@@ -51,7 +57,7 @@ fn main() -> Result<(), io::Error> {
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
-    terminal.show_cursor()?;
+    terminal.show_cursor()?;*/
 
     Ok(())
 }
