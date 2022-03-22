@@ -59,7 +59,7 @@ impl FTPConnection {
                         .split(',').collect();
                     println!("{:?}", passive_data);
                     let address = passive_data[0..4].join(".");
-                    let port = (passive_data[4].parse::<u16>().unwrap_or(0) * 0xFF + passive_data[5].parse::<u16>().unwrap_or(0)).to_string();
+                    let port = (passive_data[4].parse::<u16>().unwrap_or(0) * 0x100 + passive_data[5].parse::<u16>().unwrap_or(0)).to_string();
                     self.data_stream = Some(TcpStream::connect(address + ":" + &port)?);
                     Ok(())
                 }
@@ -68,8 +68,16 @@ impl FTPConnection {
                 }
             }
             self::ConnectionType::Active => {
+
                 Ok(())
             }
         }
+    }
+    pub fn get_directory_listing(&mut self) -> std::io::Result<Vec<String>> {
+        self.establish_data_connection()?;
+        self.issue_command("LIST", vec![])?;
+        let mut res = String::new();
+        self.data_stream.as_ref().unwrap().read_to_string(&mut res)?;
+        Ok(res.split('\n').map(|s| s.trim_end().to_string()).collect())
     }
 }

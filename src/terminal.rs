@@ -6,7 +6,7 @@ use tui::{
     style::{Style, Color, Modifier},
 };
 
-pub fn create_layout<B: Backend>(f: &mut Frame<B>, state: &mut ListState) {
+pub fn create_layout<B: Backend>(f: &mut Frame<B>, items: Vec<String>) {
     let chunks = Layout::default()
          .direction(Direction::Horizontal)
          .margin(1)
@@ -17,14 +17,14 @@ pub fn create_layout<B: Backend>(f: &mut Frame<B>, state: &mut ListState) {
              ].as_ref()
          )
          .split(f.size());
-    let items = [ListItem::new("Item 1"), ListItem::new("Item 2"), ListItem::new("Item 3")];
+    let items: Vec<ListItem> = items.into_iter().map(|i| ListItem::new(i)).collect();
 
     let block = List::new(items)
         .block(Block::default().title("Remote").borders(Borders::ALL))
         .style(Style::default().fg(Color::White))
         .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
         .highlight_symbol(">>");
-     f.render_stateful_widget(block, chunks[0], state);
+     f.render_widget(block, chunks[0]);
      
      let block = Block::default()
           .title("Local")
