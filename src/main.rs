@@ -17,9 +17,8 @@ use crossterm::{
 
 fn main() -> Result<(), io::Error> {
     let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
-    println!("{}", ftp.read_server_response()?);
-    ftp.write_to_control_stream(String::from("USER dlpuser\n"))?;
-    println!("{}", ftp.read_server_response()?);
+    println!("{:?}", ftp.login("dlpuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?);
+    ftp.establish_data_connection()?;
 
     /*enable_raw_mode()?;
     let mut stdout = io::stdout();
