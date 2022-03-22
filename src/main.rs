@@ -15,7 +15,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<(), ftp::Error> {
     let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
     ftp.login("dlpuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?;
     let files = ftp.get_directory_listing()?;
