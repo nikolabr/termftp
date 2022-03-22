@@ -28,7 +28,7 @@ impl From<(&str, &str)> for ServerResponse {
 
 #[derive(Debug, Snafu)]
 pub enum Error { // Used for 4xx and 5xx
-    #[snafu(display("Server returned negative reply: {} {} from command", response.0, response.1))]
+    #[snafu(display("Server returned negative reply: {} {}", response.0, response.1))]
     NegativeReturnCode { response: ServerResponse },
     #[snafu(display("Received malformed data"))]
     InvalidData,
@@ -56,18 +56,19 @@ impl From<ServerResponse> for Result<ServerResponse> {
 }
 
 impl FTPConnection {
-    pub fn new(hostname: String, connection_type: ConnectionType) -> std::io::Result<FTPConnection> {
-        Ok(FTPConnection { control_stream: TcpStream::connect(hostname + ":21")?, data_stream: None, r#type: connection_type })
+    pub fn new(hostname: &str, connection_type: ConnectionType) -> std::io::Result<FTPConnection> {
+        Ok(FTPConnection { control_stream: TcpStream::connect(hostname)?, data_stream: None, r#type: connection_type })
     }
     pub fn read_server_response(&mut self) -> self::Result<ServerResponse> {
         let mut res = String::new();
         let mut reader = BufReader::new(&self.control_stream);
         reader.read_line(&mut res)?;
         let response: ServerResponse = res.split_at(4).into();
-        println!("{:?}", response);
+        //println!("{:?}", response);
         response.into()
     }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
+        //println!("{} {:?}", command, arguments);
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
     }

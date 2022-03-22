@@ -16,8 +16,23 @@ use crossterm::{
 };
 
 fn main() -> Result<(), ftp::Error> {
-    let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
-    ftp.login("dlpuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?;
+    let mut addr = String::new();
+    let stdin = io::stdin();
+
+    println!("Server address: ");
+
+    stdin.read_line(&mut addr)?;
+    let mut ftp = ftp::FTPConnection::new((addr.clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
+    let mut user = String::new();
+    let mut pass = String::new();
+    println!("User: ");
+    stdin.read_line(&mut user)?;
+    println!("Password: ");
+    stdin.read_line(&mut pass)?;
+    ftp.login(user.as_str().trim_end(), pass.as_str().trim_end())?;
+
+    //let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
+    //ftp.login("dapuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?;
     let files = ftp.get_directory_listing()?;
 
     enable_raw_mode()?;
