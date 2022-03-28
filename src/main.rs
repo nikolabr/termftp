@@ -22,7 +22,7 @@ fn main() -> Result<(), ftp::Error> {
     println!("Server address: ");
 
     stdin.read_line(&mut addr)?;
-    let mut ftp = ftp::FTPConnection::new((addr.clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
+    let mut ftp = ftp::Connection::new((addr.clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
     let mut user = String::new();
     let mut pass = String::new();
     println!("User: ");
@@ -34,6 +34,7 @@ fn main() -> Result<(), ftp::Error> {
     //let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
     //ftp.login("dapuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?;
     let files = ftp.get_directory_listing()?;
+    ftp.set_transfer_mode(ftp::TransferMode::ASCII)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

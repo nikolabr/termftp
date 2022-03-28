@@ -4,14 +4,14 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
-use std::io::ErrorKind;
+use std::thread;
 
 pub enum ConnectionType {
     Passive,
     Active
 }
 
-pub struct FTPConnection {
+pub struct Connection {
     control_stream: TcpStream,
     data_stream: Option<TcpStream>,
     r#type: ConnectionType
@@ -55,9 +55,16 @@ impl From<ServerResponse> for Result<ServerResponse> {
     }
 }
 
-impl FTPConnection {
-    pub fn new(hostname: &str, connection_type: ConnectionType) -> std::io::Result<FTPConnection> {
-        Ok(FTPConnection { control_stream: TcpStream::connect(hostname)?, data_stream: None, r#type: connection_type })
+pub enum TransferMode {
+    ASCII, 
+    Binary, 
+    EBCDIC,
+    Unicode // Not officially supported, experimental
+}
+
+impl Connection {
+    pub fn new(hostname: &str, connection_type: ConnectionType) -> self::Result<Connection> {
+        Ok(Connection { control_stream: TcpStream::connect(hostname)?, data_stream: None, r#type: connection_type })
     }
     pub fn read_server_response(&mut self) -> self::Result<ServerResponse> {
         let mut res = String::new();
@@ -113,6 +120,21 @@ impl FTPConnection {
 
         let mut res = String::new();
         self.data_stream.as_ref().unwrap().read_to_string(&mut res)?;
+        self.read_server_response()?;
+
+        self.data_stream.as_ref().unwrap().shutdown(std::net::Shutdown::Both)?;
+        self.data_stream = None;
+
         Ok(res.split('\n').map(|s| s.trim_end().to_string()).collect())
+    }
+    pub fn set_transfer_mode(&mut self, mode: TransferMode) -> self::Result<ServerResponse> {
+        self.issue_command("TYPE", vec![
+            match mode {
+                TransferMode::ASCII => "A",
+                TransferMode::Binary => "I",
+                TransferMode::EBCDIC => "E",
+                TransferMode::Unicode => "U" // Not implemented on all servers
+            }
+        ])
     }
 }
