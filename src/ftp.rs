@@ -4,7 +4,6 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
-use std::thread;
 
 pub enum ConnectionType {
     Passive,
@@ -13,7 +12,6 @@ pub enum ConnectionType {
 
 pub struct Connection {
     control_stream: TcpStream,
-    data_stream: Option<TcpStream>,
     r#type: ConnectionType
 }
 
@@ -64,7 +62,7 @@ pub enum TransferMode {
 
 impl Connection {
     pub fn new(hostname: &str, connection_type: ConnectionType) -> self::Result<Connection> {
-        Ok(Connection { control_stream: TcpStream::connect(hostname)?, data_stream: None, r#type: connection_type })
+        Ok(Connection { control_stream: TcpStream::connect(hostname)?, r#type: connection_type })
     }
     pub fn read_server_response(&mut self) -> self::Result<ServerResponse> {
         let mut res = String::new();
@@ -75,7 +73,7 @@ impl Connection {
         response.into()
     }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
-        //println!("{} {:?}", command, arguments);
+        println!("{} {:?}", command, arguments);
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
     }
@@ -84,7 +82,7 @@ impl Connection {
         self.issue_command("USER", vec![username])?;
         Ok(self.issue_command("PASS", vec![password])?)
     }
-    pub fn establish_data_connection(&mut self) -> self::Result<ServerResponse> {
+    pub fn establish_data_connection(&mut self) -> self::Result<TcpStream> {
         match &self.r#type {
             self::ConnectionType::Passive => {  
                 let passive_response = self.issue_command("PASV", vec![])?;
@@ -96,34 +94,29 @@ impl Connection {
                         .strip_suffix(").")
                         .ok_or(Error::InvalidData)?
                         .split(',').collect();
-                    println!("{:?}", passive_data);
                     let address = passive_data[0..4].join(".");
                     let port = (passive_data[4].parse::<u16>().unwrap_or(0) * 0x100 + passive_data[5].parse::<u16>().unwrap_or(0)).to_string();
-                    self.data_stream = Some(TcpStream::connect(address + ":" + &port)?);
-                    Ok(passive_response)
+                    Ok(TcpStream::connect(address + ":" + &port)?)
                 }
                 else {
                     Err(Error::NegativeReturnCode { response: passive_response })
                 }
             }
             self::ConnectionType::Active => { // Do not use!
-                let active_response = self.issue_command("PORT", vec![])?;
-                Ok(active_response)
-            
+                /*let active_response = self.issue_command("PORT", vec![])?;
+                Ok(active_response)*/
+                Err(Error::InvalidData)
             }
         }
     }
     pub fn get_directory_listing(&mut self) -> self::Result<Vec<String>> {
-        self.establish_data_connection()?;
-        self.issue_command("LIST", vec![])?;
+        let mut stream = self.establish_data_connection()?;
+        self.issue_command("NLST", vec![])?;
         println!("Getting directory!");
 
         let mut res = String::new();
-        self.data_stream.as_ref().unwrap().read_to_string(&mut res)?;
+        stream.read_to_string(&mut res)?;
         self.read_server_response()?;
-
-        self.data_stream.as_ref().unwrap().shutdown(std::net::Shutdown::Both)?;
-        self.data_stream = None;
 
         Ok(res.split('\n').map(|s| s.trim_end().to_string()).collect())
     }
@@ -136,5 +129,21 @@ impl Connection {
                 TransferMode::Unicode => "U" // Not implemented on all servers
             }
         ])
+    }
+    pub fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
+        self.establish_data_connection()?;
+
+        let mut stream = self.establish_data_connection()?;
+        let mut res = Vec::new();
+
+        let read_data = std::thread::spawn(move || {
+            println!("{:?}", stream.read_to_end(&mut res)?);
+            Ok(res)
+        });
+        self.issue_command("RETR", vec![filename])?;
+
+        self.read_server_response()?;
+
+        read_data.join().unwrap()
     }
 }

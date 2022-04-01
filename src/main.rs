@@ -8,6 +8,9 @@ use tui::{
     Terminal,
     widgets::{ListState}
 };
+use std::path::PathBuf;
+use std::fs::File;
+use std::io::prelude::{Read, Write};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
@@ -22,6 +25,7 @@ fn main() -> Result<(), ftp::Error> {
     println!("Server address: ");
 
     stdin.read_line(&mut addr)?;
+    
     let mut ftp = ftp::Connection::new((addr.clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
     let mut user = String::new();
     let mut pass = String::new();
@@ -31,11 +35,16 @@ fn main() -> Result<(), ftp::Error> {
     stdin.read_line(&mut pass)?;
     ftp.login(user.as_str().trim_end(), pass.as_str().trim_end())?;
 
-    //let mut ftp = ftp::FTPConnection::new(String::from("35.163.228.146"), ftp::ConnectionType::Passive)?;
-    //ftp.login("dapuser", "rNrKYTX9g7z3RgJRmxWuGHbeu")?;
     let files = ftp.get_directory_listing()?;
     ftp.set_transfer_mode(ftp::TransferMode::ASCII)?;
+    let filename = &files[0];
+    let mut path = PathBuf::new();
+    path.push(home::home_dir().unwrap());
+    path.push(filename);
+    let mut file = File::create(path)?;
 
+    file.write_all(&ftp.receive_file(filename)?)?;
+    
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
