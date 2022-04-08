@@ -1,6 +1,7 @@
 use tui::{
     widgets::{List, ListItem, ListState},
 };
+use std::path::PathBuf;
 
 pub struct StatefulList<T> {
     pub state: ListState,
@@ -42,8 +43,11 @@ impl<T> StatefulList<T> {
         };
         self.state.select(Some(i));
     }
+
 }
 
 pub struct App {
-    pub remote_list: StatefulList<String>
+    pub remote_list: StatefulList<String>,
+    pub local_list: StatefulList<String>,
+    pub local_path: PathBuf
 }

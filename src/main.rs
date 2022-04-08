@@ -12,7 +12,7 @@ use tui::{
     widgets::{ListState}
 };
 use std::path::PathBuf;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::{Read, Write};
 
 use crossterm::{
@@ -22,8 +22,14 @@ use crossterm::{
 };
 
 impl App {
-    pub fn new() -> App {
-        App { remote_list: StatefulList::with_items(Vec::new()) }
+    pub fn new() -> io::Result<App> {
+        Ok(App { remote_list: StatefulList::with_items(Vec::new()), 
+            local_list: StatefulList::with_items(
+                fs::read_dir(home::home_dir().unwrap())?
+                .map(|res| res.map(|e| e.path().to_str().unwrap_or(" ").to_string()))
+                .collect::<Result<Vec<_>, io::Error>>()?
+            ),
+            local_path: home::home_dir().unwrap() })
     }
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<(), ftp::Error> {
         terminal.draw(|mut f| {
@@ -62,7 +68,7 @@ impl App {
         ftp.login(res[1].as_str().trim_end(), res[2].as_str().trim_end())?;
 
         self.remote_list = StatefulList::with_items(ftp.get_directory_listing()?);
-        let len = self.items().len();
+        let len = self.remote_items().len();
         loop {
             terminal.draw(|mut f| {
                 ui::draw_layout(&mut f, self, format!("{} files", len));
@@ -73,6 +79,16 @@ impl App {
                         match event.code {
                             KeyCode::Down => self.remote_list.next(),
                             KeyCode::Up => self.remote_list.previous(),
+                            KeyCode::Enter => { 
+                                let filename = &self.remote_items()[self.remote_list.state.selected().unwrap_or(0)];
+                                self.local_path.push(filename);
+                                let mut file = File::create(&self.local_path)?;
+                                terminal.draw(|mut f| {
+                                    ui::draw_layout(&mut f, self, format!("Receiving file {}", &self.local_path.to_str().unwrap_or("Unknown file")));
+                                })?;
+                                file.write_all(&ftp.receive_file(filename)?)?;
+                                self.local_path = home::home_dir().unwrap();
+                             }
                             KeyCode::Esc => break,
                             _ => {}
                         }
@@ -86,7 +102,10 @@ impl App {
 
         Ok(())
     }
-    pub fn items(&self) -> Vec<String> {
+    pub fn remote_items(&self) -> Vec<String> {
+        self.remote_list.items.clone()
+    }
+    pub fn local_items(&self) -> Vec<String> {
         self.remote_list.items.clone()
     }
 }
@@ -97,7 +116,7 @@ fn main() -> Result<(), ftp::Error> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let mut app = App::new();
+    let mut app = App::new()?;
 
     app.run(&mut terminal).unwrap_or_else(|e| { 
         terminal.draw(|f| {
