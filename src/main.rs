@@ -4,6 +4,7 @@ pub mod ftp;
 use std::{io, thread, time::Duration};
 use crossterm::event::{poll, read, Event, KeyCode};
 use tui::{
+    backend::Backend,
     backend::CrosstermBackend,
     Terminal,
     widgets::{ListState}
@@ -18,14 +19,56 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
-fn main() -> Result<(), ftp::Error> {
-    let mut addr = String::new();
-    let stdin = io::stdin();
+fn run<B: Backend>(terminal: &mut Terminal<B>) -> Result<(), ftp::Error> {
+    terminal.draw(|mut f| {
+        terminal::draw_layout(&mut f, vec![], String::new());
+    })?;
 
-    println!("Server address: ");
+    let mut res: Vec<String> = vec![];
+    for t in ["Server: ", "User: ", "Password: "] {
+        let mut text = String::new();
+        terminal.draw(|mut f| {
+            terminal::draw_layout(&mut f, vec![], t.to_string() + &text);
+        })?;
+        loop {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        text.push(c);
+                        terminal.draw(|mut f| {
+                            terminal::draw_layout(&mut f, vec![], t.to_string() + &text);
+                        })?;                
+                    }
+                    KeyCode::Backspace => {
+                        text.pop();
+                        terminal.draw(|mut f| {
+                            terminal::draw_layout(&mut f, vec![], t.to_string() + &text);
+                        })?;                
+                    }
+                    KeyCode::Enter => break,
+                    _ => {}
+                }
+            }
+        }
+        res.push(text);
+    }
+    let mut ftp = ftp::Connection::new((res[0].clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
+    ftp.login(res[1].as_str().trim_end(), res[2].as_str().trim_end())?;
+    let files = ftp.get_directory_listing()?;
+    let len = files.len();
+    terminal.draw(|mut f| {
+        terminal::draw_layout(&mut f, files, format!("{} files", len));
+    })?;
+
+    Ok(())
+}
+
+fn main() -> Result<(), ftp::Error> {
+
+    /*println!("Server address: ");
 
     stdin.read_line(&mut addr)?;
-    
+
     let mut ftp = ftp::Connection::new((addr.clone().trim_end().to_string() + ":21").as_str(), ftp::ConnectionType::Passive)?;
     let mut user = String::new();
     let mut pass = String::new();
@@ -33,17 +76,7 @@ fn main() -> Result<(), ftp::Error> {
     stdin.read_line(&mut user)?;
     println!("Password: ");
     stdin.read_line(&mut pass)?;
-    ftp.login(user.as_str().trim_end(), pass.as_str().trim_end())?;
-
-    let files = ftp.get_directory_listing()?;
-    ftp.set_transfer_mode(ftp::TransferMode::ASCII)?;
-    let filename = &files[0];
-    let mut path = PathBuf::new();
-    path.push(home::home_dir().unwrap());
-    path.push(filename);
-    let mut file = File::create(path)?;
-
-    file.write_all(&ftp.receive_file(filename)?)?;
+    ftp.login(user.as_str().trim_end(), pass.as_str().trim_end())?;*/
     
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -51,28 +84,13 @@ fn main() -> Result<(), ftp::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    terminal.draw(|mut f| {
-        terminal::create_layout(&mut f, files);
-    })?;
+    run(&mut terminal).unwrap_or_else(|e| { 
+        terminal.draw(|f| {
+            terminal::draw_layout(f, vec![], e.to_string());
+        }).unwrap();
+    });
 
-    /*loop {
-        if poll(Duration::from_millis(200))? {
-            match read()? {
-                Event::Key(event) => {
-                    match event.code {
-                        KeyCode::Down => ,
-                        KeyCode::Up => ,
-                        KeyCode::Esc => break,
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            // Timeout expired and no `Event` is available
-        }
-    }*/
-    thread::sleep(Duration::from_millis(5000));
+    thread::sleep(Duration::from_millis(10000));
 
     // restore terminal
     disable_raw_mode()?;
