@@ -73,7 +73,6 @@ impl Connection {
         response.into()
     }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
-        println!("{} {:?}", command, arguments);
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
     }
@@ -112,7 +111,6 @@ impl Connection {
     pub fn get_directory_listing(&mut self) -> self::Result<Vec<String>> {
         let mut stream = self.establish_data_connection()?;
         self.issue_command("NLST", vec![])?;
-        println!("Getting directory!");
 
         let mut res = String::new();
         stream.read_to_string(&mut res)?;
@@ -137,7 +135,7 @@ impl Connection {
         let mut res = Vec::new();
 
         let read_data = std::thread::spawn(move || {
-            println!("{:?}", stream.read_to_end(&mut res)?);
+            stream.read_to_end(&mut res)?;
             Ok(res)
         });
         self.issue_command("RETR", vec![filename])?;
