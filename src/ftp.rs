@@ -69,7 +69,6 @@ impl Connection {
         let mut reader = BufReader::new(&self.control_stream);
         reader.read_line(&mut res)?;
         let response: ServerResponse = res.split_at(4).into();
-        //println!("{:?}", response);
         response.into()
     }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
