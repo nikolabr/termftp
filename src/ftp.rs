@@ -4,6 +4,9 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
+use futures::executor::block_on;
+use futures::try_join;
+use tokio::io::{self, AsyncReadExt, AsyncBufReadExt};
 
 pub enum ConnectionType {
     Passive,
@@ -72,6 +75,14 @@ impl Connection {
 
         response.into()
     }
+    pub async fn async_read_server_response(&mut self) -> self::Result<ServerResponse> {
+        let mut res = String::new();
+        let mut reader = tokio::io::BufReader::new(tokio::net::TcpStream::from_std(self.control_stream.try_clone()?)?);
+        reader.read_line(&mut res).await?;
+        let response: ServerResponse = res.split_at(4).into();
+
+        response.into()
+    }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
@@ -128,20 +139,15 @@ impl Connection {
             }
         ])
     }
-    pub fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
-        self.establish_data_connection()?;
 
-        let mut stream = self.establish_data_connection()?;
+    pub async fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
+        let mut stream = tokio::net::TcpStream::from_std(self.establish_data_connection()?)?;
         let mut res = Vec::new();
-
-        let read_data = std::thread::spawn(move || {
-            stream.read_to_end(&mut res)?;
-            Ok(res)
-        });
         self.issue_command("RETR", vec![filename])?;
 
-        self.read_server_response()?;
+        stream.read_to_end(&mut res).await?;
+        self.async_read_server_response().await?;
 
-        read_data.join().unwrap()
+        Ok(res)
     }
 }
