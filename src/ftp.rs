@@ -4,7 +4,7 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
-use tokio::io::{AsyncReadExt, AsyncBufReadExt};
+use tokio::io::{AsyncReadExt, AsyncBufReadExt, AsyncWriteExt};
 
 pub enum ConnectionType {
     Passive,
@@ -65,6 +65,7 @@ impl Connection {
     pub fn new(hostname: &str, connection_type: ConnectionType) -> self::Result<Connection> {
         Ok(Connection { control_stream: TcpStream::connect(hostname)?, r#type: connection_type })
     }
+
     pub fn read_server_response(&mut self) -> self::Result<ServerResponse> {
         let mut res = String::new();
         let mut reader = BufReader::new(&self.control_stream);
@@ -85,10 +86,15 @@ impl Connection {
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
     }
+
     pub fn login(&mut self, username: &str, password: &str) -> self::Result<ServerResponse> {
         self.read_server_response()?;
         self.issue_command("USER", vec![username])?;
         Ok(self.issue_command("PASS", vec![password])?)
+    }
+    pub fn close(&mut self) -> self::Result<()> {
+        self.issue_command("QUIT", vec![])?;
+        Ok(())   
     }
     pub fn establish_data_connection(&mut self) -> self::Result<TcpStream> {
         match &self.r#type {
@@ -139,7 +145,9 @@ impl Connection {
     }
 
     pub async fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
-        let mut stream = tokio::net::TcpStream::from_std(self.establish_data_connection()?)?;
+        let std_stream = self.establish_data_connection()?;
+        std_stream.set_nonblocking(true)?;
+        let mut stream = tokio::net::TcpStream::from_std(std_stream)?;
         let mut res = Vec::new();
         self.issue_command("RETR", vec![filename])?;
 
@@ -147,6 +155,22 @@ impl Connection {
         self.async_read_server_response().await?;
 
         Ok(res)
+    }
+
+    pub async fn upload_file(&mut self, data: &[u8], filename: &str) -> self::Result<ServerResponse> {
+        {
+            let std_stream = self.establish_data_connection()?;
+            std_stream.set_nonblocking(true)?;
+            let mut stream = tokio::net::TcpStream::from_std(std_stream)?;
+            self.issue_command("STOR", vec![filename])?;
+            stream.write_all(data).await?;
+        }
+        
+        self.async_read_server_response().await
+    }
+
+    pub fn get_remote_size(&mut self, filename: &str) -> self::Result<u64> {
+        self.issue_command("SIZE", vec![filename])?.1.trim().parse::<u64>().map_err(|_| Error::InvalidData)
     }
 }
 
@@ -228,6 +252,53 @@ mod tests {
 
         assert!(metadata.is_file());
         assert_eq!(metadata.len(), bytes_written as u64);
+
+        Ok(())
+    }
+    #[test]
+    fn file_upload_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
+        ftp.login(FTP_USER, FTP_PASS)?;
+
+        // Create test string
+        let string = "This is a test file";
+        let b = string.as_bytes();
+        
+        // Upload file
+        let mut rt = Runtime::new()?;
+        rt.block_on(async {
+            ftp.upload_file(b, "test_file").await
+        })?;
+        println!("Uploaded file");
+
+        // Retrieve file from server
+        let files = ftp.get_directory_listing()?;
+
+        let pos = files.iter().position(|s| s == "test_file").ok_or(ftp::Error::InvalidData)?;
+        println!("Receiving file");
+        let remote = String::from_utf8(
+            rt.block_on(async {
+                ftp.receive_file(&files[pos]).await
+            })?
+        ).map_err(|_| ftp::Error::InvalidData)?;
+
+        assert_eq!(remote, string);
+
+        Ok(())
+    }
+
+    #[test]
+    fn remote_size_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
+        ftp.login(FTP_USER, FTP_PASS)?;
+
+        let files = ftp.get_directory_listing()?;
+
+        let size = ftp.get_remote_size(&files[0])?;
+
+        assert!(size > 0);
 
         Ok(())
     }
