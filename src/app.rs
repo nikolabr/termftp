@@ -1,5 +1,5 @@
 use tui::{
-    widgets::{List, ListItem, ListState},
+    widgets::{ListState},
 };
 use std::path::PathBuf;
 

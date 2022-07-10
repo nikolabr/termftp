@@ -8,13 +8,10 @@ use crossterm::event::{poll, read, Event, KeyCode};
 use tui::{
     backend::Backend,
     backend::CrosstermBackend,
-    Terminal,
-    widgets::{ListState}
+    Terminal
 };
-use std::path::PathBuf;
 use std::fs::{self, File};
-use std::io::prelude::{Read, Write};
-use futures::executor::block_on;
+use std::io::prelude::{Write};
 use tokio::runtime::Runtime;
 
 use crossterm::{

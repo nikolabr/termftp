@@ -4,9 +4,7 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
-use futures::executor::block_on;
-use futures::try_join;
-use tokio::io::{self, AsyncReadExt, AsyncBufReadExt};
+use tokio::io::{AsyncReadExt, AsyncBufReadExt};
 
 pub enum ConnectionType {
     Passive,
@@ -43,7 +41,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
-type Result<T, E = self::Error> = std::result::Result<T, E>;
+pub type Result<T, E = self::Error> = std::result::Result<T, E>;
 
 impl From<ServerResponse> for Result<ServerResponse> {
     fn from(response: ServerResponse) -> Self {
@@ -127,7 +125,7 @@ impl Connection {
         stream.read_to_string(&mut res)?;
         self.read_server_response()?;
 
-        Ok(res.split('\n').map(|s| s.trim_end().to_string()).collect())
+        Ok(res.split('\n').map(|s| s.trim_end().to_string()).filter(|s| s.len() > 0).collect())
     }
     pub fn set_transfer_mode(&mut self, mode: TransferMode) -> self::Result<ServerResponse> {
         self.issue_command("TYPE", vec![
@@ -149,5 +147,88 @@ impl Connection {
         self.async_read_server_response().await?;
 
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ftp;
+    use std::fs::{self, File};
+    use tokio::runtime::Runtime;
+    use std::io::prelude::{Write};
+
+    static FTP_URL: &str = "ftp.dlptest.com:21";
+    static FTP_USER: &str = "dlpuser";
+    static FTP_PASS: &str = "rNrKYTX9g7z3RgJRmxWuGHbeu";
+    
+    fn test_login() -> ftp::Result<ftp::Connection> {
+        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
+        ftp.login(FTP_USER, FTP_PASS)?;
+        Ok(ftp)
+    }
+
+    #[test]
+    fn login_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        test_login()?;
+        Ok(())
+    }
+    #[test]
+    fn data_connection_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = test_login()?;
+
+        // Establish the data connection
+        ftp.establish_data_connection()?;
+
+        Ok(())
+    }
+    #[test]
+    fn list_remote_files() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = test_login()?;
+        let files = ftp.get_directory_listing()?;
+
+        // Listing is not empty
+        assert_ne!(files.len(), 0);
+
+        // File names are not empty
+        for f in files {
+            assert_ne!(f.len(), 0);
+        }
+
+        Ok(())
+    }
+    #[test]
+    fn file_download_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
+        ftp.login(FTP_USER, FTP_PASS)?;
+
+        // Create temporary file
+        let files = ftp.get_directory_listing()?;
+        let mut path = files[0].clone();
+        path.insert_str(0, "/tmp/");
+
+        let bytes_written;
+        // Create a scope for the file
+        {
+            let mut file = File::create(&path)?;
+
+            // Write file
+            let mut rt = Runtime::new()?;
+            bytes_written = rt.block_on(async {
+                let data = ftp.receive_file(&files[0]).await?;
+                file.write(&data).map_err(|e| ftp::Error::from(e))
+            })?;
+        }   
+
+        let file = File::open(&path)?;
+        let metadata = file.metadata()?;
+
+        assert!(metadata.is_file());
+        assert_eq!(metadata.len(), bytes_written as u64);
+
+        Ok(())
     }
 }
