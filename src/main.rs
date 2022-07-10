@@ -12,7 +12,6 @@ use tui::{
 };
 use std::fs::{self, File};
 use std::io::prelude::{Write};
-use tokio::runtime::Runtime;
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
@@ -87,11 +86,8 @@ impl App {
                                 terminal.draw(|mut f| {
                                     ui::draw_layout(&mut f, self, format!("Receiving file {}", &self.local_path.to_str().unwrap_or("Unknown file")));
                                 })?;
-                                let mut rt = Runtime::new()?;
-                                rt.block_on(async {
-                                    let data = ftp.receive_file(filename).await?;
-                                    file.write_all(&data).map_err(|e| ftp::Error::from(e))
-                                })?;
+                                let data = ftp.receive_file(filename)?;
+                                file.write_all(&data).map_err(|e| ftp::Error::from(e))?;
                                 self.local_path = home::home_dir().unwrap();
                              }
                             KeyCode::Esc => break,

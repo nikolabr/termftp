@@ -4,8 +4,6 @@ use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
-use tokio::io::{AsyncReadExt, AsyncBufReadExt, AsyncWriteExt};
-
 pub enum ConnectionType {
     Passive,
     Active
@@ -74,14 +72,6 @@ impl Connection {
 
         response.into()
     }
-    pub async fn async_read_server_response(&mut self) -> self::Result<ServerResponse> {
-        let mut res = String::new();
-        let mut reader = tokio::io::BufReader::new(tokio::net::TcpStream::from_std(self.control_stream.try_clone()?)?);
-        reader.read_line(&mut res).await?;
-        let response: ServerResponse = res.split_at(4).into();
-
-        response.into()
-    }
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
@@ -144,29 +134,22 @@ impl Connection {
         ])
     }
 
-    pub async fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
-        let std_stream = self.establish_data_connection()?;
-        std_stream.set_nonblocking(true)?;
-        let mut stream = tokio::net::TcpStream::from_std(std_stream)?;
+    pub fn receive_file(&mut self, filename: &str) -> self::Result<Vec<u8>> {
+        let mut stream = self.establish_data_connection()?;
         let mut res = Vec::new();
         self.issue_command("RETR", vec![filename])?;
 
-        stream.read_to_end(&mut res).await?;
-        self.async_read_server_response().await?;
+        stream.read_to_end(&mut res)?;
+        self.read_server_response()?;
 
         Ok(res)
     }
 
-    pub async fn upload_file(&mut self, data: &[u8], filename: &str) -> self::Result<ServerResponse> {
-        {
-            let std_stream = self.establish_data_connection()?;
-            std_stream.set_nonblocking(true)?;
-            let mut stream = tokio::net::TcpStream::from_std(std_stream)?;
-            self.issue_command("STOR", vec![filename])?;
-            stream.write_all(data).await?;
-        }
-        
-        self.async_read_server_response().await
+    pub fn upload_file(&mut self, data: &[u8], filename: &str) -> self::Result<ServerResponse> {
+        let mut stream = self.establish_data_connection()?;
+        self.issue_command("STOR", vec![filename])?;
+        stream.write_all(data)?;
+        self.read_server_response()
     }
 
     pub fn get_remote_size(&mut self, filename: &str) -> self::Result<u64> {
@@ -178,7 +161,6 @@ impl Connection {
 mod tests {
     use crate::ftp;
     use std::fs::{self, File};
-    use tokio::runtime::Runtime;
     use std::io::prelude::{Write};
 
     static FTP_URL: &str = "ftp.dlptest.com:21";
@@ -240,11 +222,9 @@ mod tests {
             let mut file = File::create(&path)?;
 
             // Write file
-            let mut rt = Runtime::new()?;
-            bytes_written = rt.block_on(async {
-                let data = ftp.receive_file(&files[0]).await?;
-                file.write(&data).map_err(|e| ftp::Error::from(e))
-            })?;
+            let data = ftp.receive_file(&files[0])?;
+
+            bytes_written = file.write(&data).map_err(|e| ftp::Error::from(e))?;
         }   
 
         let file = File::open(&path)?;
@@ -266,10 +246,7 @@ mod tests {
         let b = string.as_bytes();
         
         // Upload file
-        let mut rt = Runtime::new()?;
-        rt.block_on(async {
-            ftp.upload_file(b, "test_file").await
-        })?;
+        ftp.upload_file(b, "test_file")?;
         println!("Uploaded file");
 
         // Retrieve file from server
@@ -277,11 +254,7 @@ mod tests {
 
         let pos = files.iter().position(|s| s == "test_file").ok_or(ftp::Error::InvalidData)?;
         println!("Receiving file");
-        let remote = String::from_utf8(
-            rt.block_on(async {
-                ftp.receive_file(&files[pos]).await
-            })?
-        ).map_err(|_| ftp::Error::InvalidData)?;
+        let remote = String::from_utf8(ftp.receive_file(&files[pos])?).map_err(|_| ftp::Error::InvalidData)?;
 
         assert_eq!(remote, string);
 
