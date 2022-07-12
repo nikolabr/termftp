@@ -59,6 +59,12 @@ pub enum TransferMode {
     Unicode // Not officially supported, experimental
 }
 
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.close().unwrap();
+    }
+}
+
 impl Connection {
     pub fn new(hostname: &str, connection_type: ConnectionType) -> self::Result<Connection> {
         Ok(Connection { control_stream: TcpStream::connect(hostname)?, r#type: connection_type })
@@ -100,7 +106,7 @@ impl Connection {
                         .split(',').collect();
                     let address = passive_data[0..4].join(".");
                     let port = (passive_data[4].parse::<u16>().unwrap_or(0) * 0x100 + passive_data[5].parse::<u16>().unwrap_or(0)).to_string();
-                    Ok(TcpStream::connect(address + ":" + &port)?)
+                    TcpStream::connect(address + ":" + &port).map_err(|e| Error::IOError { source: e })
                 }
                 else {
                     Err(Error::NegativeReturnCode { response: passive_response })
@@ -146,21 +152,39 @@ impl Connection {
     }
 
     pub fn upload_file(&mut self, data: &[u8], filename: &str) -> self::Result<ServerResponse> {
-        let mut stream = self.establish_data_connection()?;
-        self.issue_command("STOR", vec![filename])?;
-        stream.write_all(data)?;
+        {
+            let mut stream = self.establish_data_connection()?;
+            self.issue_command("STOR", vec![filename])?;
+            stream.write_all(data)?;
+        }
         self.read_server_response()
     }
 
     pub fn get_remote_size(&mut self, filename: &str) -> self::Result<u64> {
         self.issue_command("SIZE", vec![filename])?.1.trim().parse::<u64>().map_err(|_| Error::InvalidData)
     }
+
+    pub fn make_directory(&mut self, name: &str) -> self::Result<ServerResponse> {
+        self.issue_command("MKD", vec![name])
+    }
+
+    pub fn change_directory(&mut self, name: &str) -> self::Result<ServerResponse> {
+        self.issue_command("CWD", vec![name])
+    }
+
+    pub fn remove_directory(&mut self, name: &str) -> self::Result<ServerResponse> {
+        self.issue_command("RMD", vec![name])
+    }
+
+    pub fn root_directory(&mut self) -> self::Result<ServerResponse> {
+        self.issue_command("CDUP", vec![])
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ftp;
-    use std::fs::{self, File};
+    use std::fs::{File};
     use std::io::prelude::{Write};
 
     static FTP_URL: &str = "ftp.dlptest.com:21";
@@ -208,8 +232,7 @@ mod tests {
     #[test]
     fn file_download_test() -> ftp::Result<()> {
         // Log onto DLP test server
-        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
-        ftp.login(FTP_USER, FTP_PASS)?;
+        let mut ftp = test_login()?;
 
         // Create temporary file
         let files = ftp.get_directory_listing()?;
@@ -238,13 +261,13 @@ mod tests {
     #[test]
     fn file_upload_test() -> ftp::Result<()> {
         // Log onto DLP test server
-        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
-        ftp.login(FTP_USER, FTP_PASS)?;
+        let mut ftp = test_login()?;
 
         // Create test string
         let string = "This is a test file";
         let b = string.as_bytes();
         
+        println!("Uploading file");
         // Upload file
         ftp.upload_file(b, "test_file")?;
         println!("Uploaded file");
@@ -264,15 +287,63 @@ mod tests {
     #[test]
     fn remote_size_test() -> ftp::Result<()> {
         // Log onto DLP test server
-        let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
-        ftp.login(FTP_USER, FTP_PASS)?;
-
+        let mut ftp = test_login()?;
+        
         let files = ftp.get_directory_listing()?;
 
         let size = ftp.get_remote_size(&files[0])?;
 
         assert!(size > 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn change_directory_test() -> ftp::Result<()> {
+        let mut ftp = test_login()?;
+
+        let files = ftp.get_directory_listing()?;
+
+        // Remove old test directory if present
+        if files.iter().any(|s| s == "this_is_a_test_directory") {
+            ftp.remove_directory("this_is_a_test_directory")?;
+        }
+
+        // Make new directory and CWD into it
+        ftp.make_directory("this_is_a_test_directory")?;
+        ftp.change_directory("this_is_a_test_directory")?;
+
+        let files2 = ftp.get_directory_listing()?;
+
+        assert_eq!(files2.len(), 0);
+
+        assert_ne!(files, files2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn root_directory_test() -> ftp::Result<()> {
+        let mut ftp = test_login()?;
+
+        let files = ftp.get_directory_listing()?;
+
+        // Remove old test directory if present
+        if files.iter().any(|s| s == "this_is_a_test_directory") {
+            ftp.remove_directory("this_is_a_test_directory")?;
+        }
+
+        ftp.make_directory("this_is_a_test_directory")?;
+        ftp.change_directory("this_is_a_test_directory")?;
+
+        let files2 = ftp.get_directory_listing()?;
+
+        ftp.root_directory()?;
+
+        assert_eq!(files2.len(), 0);
+
+        assert_ne!(files, files2);
+        
         Ok(())
     }
 }
