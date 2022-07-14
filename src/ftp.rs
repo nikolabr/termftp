@@ -1,9 +1,11 @@
 extern crate snafu;
+extern crate lazy_static;
 
 use snafu::prelude::*;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::io::BufReader;
+
 pub enum ConnectionType {
     Passive,
     Active
@@ -31,6 +33,8 @@ pub enum Error { // Used for 4xx and 5xx
     InvalidData,
     #[snafu(display("IO error: {}", source))]
     IOError { source: std::io::Error },
+    #[snafu(display("Data race"))]
+    RaceError
 }
 
 impl From<std::io::Error> for Error {
@@ -61,6 +65,7 @@ pub enum TransferMode {
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        // self.drain_connection();
         self.close().unwrap();
     }
 }
@@ -78,6 +83,7 @@ impl Connection {
 
         response.into()
     }
+
     pub fn issue_command(&mut self, command: &str, arguments: Vec<&str>) -> self::Result<ServerResponse> {
         self.control_stream.write_fmt(format_args!("{} {}\n", command, arguments.join(" ")))?;
         Ok(self.read_server_response()?)
@@ -164,6 +170,10 @@ impl Connection {
         self.issue_command("SIZE", vec![filename])?.1.trim().parse::<u64>().map_err(|_| Error::InvalidData)
     }
 
+    pub fn delete_file(&mut self, name: &str) -> self::Result<ServerResponse> {
+        self.issue_command("DELE", vec![name])
+    }
+
     pub fn make_directory(&mut self, name: &str) -> self::Result<ServerResponse> {
         self.issue_command("MKD", vec![name])
     }
@@ -186,12 +196,21 @@ mod tests {
     use crate::ftp;
     use std::fs::{File};
     use std::io::prelude::{Write};
+    use lazy_static::lazy_static;
+    use std::sync::Mutex;
 
     static FTP_URL: &str = "ftp.dlptest.com:21";
     static FTP_USER: &str = "dlpuser";
     static FTP_PASS: &str = "rNrKYTX9g7z3RgJRmxWuGHbeu";
     
+    // Needed to prevent the tests from running in parallel, thus causing a data race
+    lazy_static! {
+        static ref FTP_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    #[inline(always)]
     fn test_login() -> ftp::Result<ftp::Connection> {
+        let _guard = FTP_MUTEX.lock().map_err(|_| ftp::Error::RaceError)?;
         let mut ftp = ftp::Connection::new(FTP_URL, ftp::ConnectionType::Passive)?;
         ftp.login(FTP_USER, FTP_PASS)?;
         Ok(ftp)
@@ -260,22 +279,23 @@ mod tests {
     }
     #[test]
     fn file_upload_test() -> ftp::Result<()> {
+        let string = "This is a test file";
+
         // Log onto DLP test server
         let mut ftp = test_login()?;
 
         // Create test string
-        let string = "This is a test file";
         let b = string.as_bytes();
         
         println!("Uploading file");
         // Upload file
-        ftp.upload_file(b, "test_file")?;
+        println!("{:?}", ftp.upload_file(b, "test_file")?);
         println!("Uploaded file");
 
         // Retrieve file from server
         let files = ftp.get_directory_listing()?;
 
-        let pos = files.iter().position(|s| s == "test_file").ok_or(ftp::Error::InvalidData)?;
+        let pos = files.iter().position(|s| s.as_str() == "test_file").ok_or(ftp::Error::InvalidData)?;
         println!("Receiving file");
         let remote = String::from_utf8(ftp.receive_file(&files[pos])?).map_err(|_| ftp::Error::InvalidData)?;
 
@@ -285,15 +305,36 @@ mod tests {
     }
 
     #[test]
+    fn file_deletion_test() -> ftp::Result<()> {
+        // Log onto DLP test server
+        let mut ftp = test_login()?;
+
+        // Create test string
+        let string = "This is a test file";
+        let b = string.as_bytes();
+        
+        // Upload file
+        println!("{:?}", ftp.upload_file(b, "test_file")?);
+        
+        println!("{:?}", ftp.delete_file("test_file")?);
+        Ok(())
+    }
+
+    #[test]
     fn remote_size_test() -> ftp::Result<()> {
         // Log onto DLP test server
         let mut ftp = test_login()?;
+
+        let string = "This is a test file";
+        let b = string.as_bytes();
         
-        let files = ftp.get_directory_listing()?;
+        // Upload file
+        println!("{:?}", ftp.upload_file(b, "test_file")?);
+        
+        let size = ftp.get_remote_size("test_file")? as usize;
 
-        let size = ftp.get_remote_size(&files[0])?;
-
-        assert!(size > 0);
+        assert_eq!(size, b.len());
+        println!("{}", size);
 
         Ok(())
     }
@@ -303,9 +344,10 @@ mod tests {
         let mut ftp = test_login()?;
 
         let files = ftp.get_directory_listing()?;
+        println!("{:?}", files);
 
         // Remove old test directory if present
-        if files.iter().any(|s| s == "this_is_a_test_directory") {
+        if files.iter().any(|s| s.as_str() == "this_is_a_test_directory") {
             ftp.remove_directory("this_is_a_test_directory")?;
         }
 
